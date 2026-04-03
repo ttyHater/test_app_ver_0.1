@@ -121,60 +121,7 @@ def compute_tambay_score(features: Dict) -> float:
 # SELENIUM BOOKY SCRAPER
 # =============================
 
-
-import streamlit as st
-import chromedriver_autoinstaller
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
-import time
-import re
-import logging
-
-log = logging.getLogger(__name__)
-
-# =============================
-# Streamlit-friendly cached driver
-# =============================
-@st.cache_resource(show_spinner=False)
-def get_driver():
-    # Automatically install matching ChromeDriver for your installed Chromium
-    chromedriver_autoinstaller.install()
-    
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--disable-software-rasterizer")
-    chrome_options.add_argument("--remote-debugging-port=9222")
-
-    # Optional: specify Chrome binary if environment doesn't auto-detect
-    # chrome_options.binary_location = "/usr/bin/chromium"
-
-    driver = webdriver.Chrome(options=chrome_options)
-    driver.set_page_load_timeout(30)
-    return driver
-
-# =============================
-# BookyScraper
-# =============================
 class BookyScraper:
-    def __init__(self):
-        self.driver = get_driver()  # use cached driver
-
-    def _parse_price(self, text: str):
-        try:
-            return float(re.sub(r"[^\d.]", "", text))
-        except (ValueError, TypeError):
-            return None
-
     RESULT_SELECTORS = [
         ".search-result-tile-container",
         ".search-results .item",
@@ -197,188 +144,17 @@ class BookyScraper:
         "[class*='no-result']",
     ]
 
-    def _wait_for_any(self, selectors: list, timeout: int = 15):
-        end = time.time() + timeout
-        while time.time() < end:
-            for empty_sel in self.NO_RESULTS_SELECTORS:
-                if self.driver.find_elements(By.CSS_SELECTOR, empty_sel):
-                    raise ValueError(f"Booky returned no results ('{empty_sel}' found)")
-            for sel in selectors:
-                elements = self.driver.find_elements(By.CSS_SELECTOR, sel)
-                if elements:
-                    return elements[0]
-            time.sleep(0.5)
-        raise TimeoutException(
-            f"None of {selectors} found within {timeout}s. "
-            f"Page title: '{self.driver.title}' | URL: {self.driver.current_url}"
-        )
-
-    @staticmethod
-    def _clean_query(query: str) -> str:
-        for sep in ["|", ",", "-", "–"]:
-            if sep in query:
-                query = query.split(sep)[0]
-        return query.strip()
-
-    def scrape_price_range(self, query: str):
-        clean = self._clean_query(query)
-        log.info(f"Booky search: '{clean}' (original: '{query}')")
-
-        self.driver.get("https://booky.ph/")
-        WebDriverWait(self.driver, 10).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
-        )
-
-        search_box = self._wait_for_any([
-            "input[name='search']",
-            "input[placeholder*='Search']",
-            "input[type='search']",
-            ".search-input input",
-            "#search",
-        ])
-        search_box.clear()
-        search_box.send_keys(clean)
-        search_box.send_keys(Keys.RETURN)
-
-        first_result = self._wait_for_any(self.RESULT_SELECTORS, timeout=20)
-        self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", first_result)
-        first_result.click()
-
-        menu_btn = self._wait_for_any(self.MENU_BTN_SELECTORS)
-        self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", menu_btn)
-        self.driver.execute_script("arguments[0].click();", menu_btn)
-
-        WebDriverWait(self.driver, 15).until(
-            lambda d: any(d.find_elements(By.CSS_SELECTOR, sel) for sel in self.PRICE_SELECTORS)
-        )
-        self.driver.execute_script("""
-            const menu = document.querySelector('.listing__menu');
-            if (menu) menu.scrollTop = menu.scrollHeight;
-        """)
-
-        values = []
-        for sel in self.PRICE_SELECTORS:
-            els = self.driver.find_elements(By.CSS_SELECTOR, sel)
-            values += [self._parse_price(e.text.strip()) for e in els if e.text.strip()]
-        values = [v for v in values if v is not None]
-
-        if not values:
-            log.warning(f"No prices found for '{clean}'")
-            return None, None
-        return int(min(values)), int(max(values))
     def __init__(self):
-        self.driver = get_driver()  # use cached driver
-
-    def _parse_price(self, text: str):
-        try:
-            return float(re.sub(r"[^\d.]", "", text))
-        except (ValueError, TypeError):
-            return None
-
-    RESULT_SELECTORS = [
-        ".search-result-tile-container",
-        ".search-results .item",
-        "[data-cy='search-result']",
-    ]
-    MENU_BTN_SELECTORS = [
-        ".listing__menu-cta",
-        "a[href*='menu']",
-        "button.menu-btn",
-    ]
-    PRICE_SELECTORS = [
-        ".rates-price",
-        ".menu-item__price",
-        ".price",
-    ]
-    NO_RESULTS_SELECTORS = [
-        ".empty-state",
-        ".no-results",
-        "[class*='empty']",
-        "[class*='no-result']",
-    ]
-
-    def _wait_for_any(self, selectors: list, timeout: int = 15):
-        end = time.time() + timeout
-        while time.time() < end:
-            for empty_sel in self.NO_RESULTS_SELECTORS:
-                if self.driver.find_elements(By.CSS_SELECTOR, empty_sel):
-                    raise ValueError(f"Booky returned no results ('{empty_sel}' found)")
-            for sel in selectors:
-                elements = self.driver.find_elements(By.CSS_SELECTOR, sel)
-                if elements:
-                    return elements[0]
-            time.sleep(0.5)
-        raise TimeoutException(
-            f"None of {selectors} found within {timeout}s. "
-            f"Page title: '{self.driver.title}' | URL: {self.driver.current_url}"
-        )
-
-    @staticmethod
-    def _clean_query(query: str) -> str:
-        for sep in ["|", ",", "-", "–"]:
-            if sep in query:
-                query = query.split(sep)[0]
-        return query.strip()
-
-    def scrape_price_range(self, query: str):
-        clean = self._clean_query(query)
-        log.info(f"Booky search: '{clean}' (original: '{query}')")
-
-        self.driver.get("https://booky.ph/")
-        WebDriverWait(self.driver, 10).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
-        )
-
-        search_box = self._wait_for_any([
-            "input[name='search']",
-            "input[placeholder*='Search']",
-            "input[type='search']",
-            ".search-input input",
-            "#search",
-        ])
-        search_box.clear()
-        search_box.send_keys(clean)
-        search_box.send_keys(Keys.RETURN)
-
-        first_result = self._wait_for_any(self.RESULT_SELECTORS, timeout=20)
-        self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", first_result)
-        first_result.click()
-
-        menu_btn = self._wait_for_any(self.MENU_BTN_SELECTORS)
-        self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", menu_btn)
-        self.driver.execute_script("arguments[0].click();", menu_btn)
-
-        WebDriverWait(self.driver, 15).until(
-            lambda d: any(d.find_elements(By.CSS_SELECTOR, sel) for sel in self.PRICE_SELECTORS)
-        )
-        self.driver.execute_script("""
-            const menu = document.querySelector('.listing__menu');
-            if (menu) menu.scrollTop = menu.scrollHeight;
-        """)
-
-        values = []
-        for sel in self.PRICE_SELECTORS:
-            els = self.driver.find_elements(By.CSS_SELECTOR, sel)
-            values += [self._parse_price(e.text.strip()) for e in els if e.text.strip()]
-        values = [v for v in values if v is not None]
-
-        if not values:
-            log.warning(f"No prices found for '{clean}'")
-            return None, None
-        return int(min(values)), int(max(values))
-    def __init__(self):
-        # Chrome options for headless/container environments
         chrome_options = Options()
-        chrome_options.add_argument("--headless=new")  # use new headless mode
-        chrome_options.add_argument("--no-sandbox")  # required in many Linux containers
-        chrome_options.add_argument("--disable-dev-shm-usage")  # prevent shared memory issues
-        chrome_options.add_argument("--disable-gpu")  # avoid GPU errors
-        chrome_options.add_argument("--window-size=1920,1080")  # ensures full page renders
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--disable-software-rasterizer")
         chrome_options.add_argument("--remote-debugging-port=9222")
 
-        # Use ChromeDriverManager to automatically install compatible ChromeDriver
         service = Service(ChromeDriverManager().install())
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
 
@@ -388,8 +164,12 @@ class BookyScraper:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.driver.quit()
 
-    def close(self):
-        self.driver.quit()
+    @staticmethod
+    def _clean_query(query: str) -> str:
+        for sep in ["|", ",", "-", "–"]:
+            if sep in query:
+                query = query.split(sep)[0]
+        return query.strip()
 
     def _parse_price(self, text: str) -> Optional[float]:
         try:
@@ -397,59 +177,21 @@ class BookyScraper:
         except (ValueError, TypeError):
             return None
 
-    RESULT_SELECTORS = [
-        ".search-result-tile-container",
-        ".search-results .item",
-        "[data-cy='search-result']",
-    ]
-    MENU_BTN_SELECTORS = [
-        ".listing__menu-cta",
-        "a[href*='menu']",
-        "button.menu-btn",
-    ]
-    PRICE_SELECTORS = [
-        ".rates-price",
-        ".menu-item__price",
-        ".price",
-    ]
-    NO_RESULTS_SELECTORS = [
-        ".empty-state",
-        ".no-results",
-        "[class*='empty']",
-        "[class*='no-result']",
-    ]
-
     def _wait_for_any(self, selectors: list, timeout: int = 15):
-        """
-        Poll until one of `selectors` appears OR a no-results indicator is found.
-        Raises ValueError on no-results so with_retries does NOT retry.
-        """
         end = time.time() + timeout
         while time.time() < end:
             for empty_sel in self.NO_RESULTS_SELECTORS:
                 if self.driver.find_elements(By.CSS_SELECTOR, empty_sel):
                     raise ValueError(f"Booky returned no results ('{empty_sel}' found)")
             for sel in selectors:
-                if self.driver.find_elements(By.CSS_SELECTOR, sel):
-                    return self.driver.find_elements(By.CSS_SELECTOR, sel)[0]
+                elements = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                if elements:
+                    return elements[0]
             time.sleep(0.5)
-
-        raise TimeoutException(
-            f"None of {selectors} found within {timeout}s. "
-            f"Page title: '{self.driver.title}' | URL: {self.driver.current_url}"
-        )
-
-    @staticmethod
-    def _clean_query(query: str) -> str:
-        """Strip location suffixes appended by Google (e.g. 'Odd Cafe | Makati' -> 'Odd Cafe')."""
-        for sep in ["|", ",", "-", "–"]:
-            if sep in query:
-                query = query.split(sep)[0]
-        return query.strip()
+        raise TimeoutException(f"None of {selectors} found within {timeout}s")
 
     def scrape_price_range(self, query: str) -> Tuple[Optional[int], Optional[int]]:
         clean = self._clean_query(query)
-        log.info(f"  Booky search: '{clean}' (original: '{query}')")
 
         def _scrape():
             self.driver.get("https://booky.ph/")
@@ -477,9 +219,7 @@ class BookyScraper:
             self.driver.execute_script("arguments[0].click();", menu_btn)
 
             WebDriverWait(self.driver, 15).until(
-                lambda d: any(
-                    d.find_elements(By.CSS_SELECTOR, sel) for sel in self.PRICE_SELECTORS
-                )
+                lambda d: any(d.find_elements(By.CSS_SELECTOR, sel) for sel in self.PRICE_SELECTORS)
             )
             self.driver.execute_script("""
                 const menu = document.querySelector('.listing__menu');
@@ -493,15 +233,10 @@ class BookyScraper:
             values = [v for v in values if v is not None]
 
             if not values:
-                raise ValueError("No price elements found across all selectors")
-
+                raise ValueError("No price elements found")
             return int(min(values)), int(max(values))
 
-        result = with_retries(_scrape, retries=2, fallback=(None, None), no_retry=(ValueError,))
-        if result == (None, None):
-            log.warning(f"Price scrape failed for: '{clean}'")
-        return result
-
+        return with_retries(_scrape, retries=2, fallback=(None, None), no_retry=(ValueError,))
 # =============================
 # GOOGLE PLACES
 # =============================
