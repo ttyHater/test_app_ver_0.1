@@ -7,3 +7,5 @@ python-dotenv
 openai
 selenium
 webdriver-manager
+chromium
+chromium-driver

@@ -121,19 +121,30 @@ def compute_tambay_score(features: Dict) -> float:
 class BookyScraper:
     def __init__(self):
         options = Options()
-        options.add_argument("--headless=new")
+
+        # REQUIRED for Streamlit / Docker / Linux
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
-        options.add_argument("--blink-settings=imagesEnabled=false")
+
+        # stability
+        options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-infobars")
         options.add_argument("--disable-notifications")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--no-sandbox")
 
-        # webdriver-manager auto-downloads the correct chromedriver version
+        # important: use chromium binary if present
+        options.binary_location = os.getenv("CHROME_BIN", "/usr/bin/chromium")
+
         service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=options)
+
+        self.driver = webdriver.Chrome(
+            service=service,
+            options=options
+        )
+
         self.wait = WebDriverWait(self.driver, 15)
         self.driver.get("https://booky.ph/")
 
