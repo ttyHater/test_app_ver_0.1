@@ -176,7 +176,7 @@ class BookyScraper:
             print("Could not detect Chrome version, using latest driver.")
 
         # Use webdriver_manager to get the matching driver
-        service = Service(ChromeDriverManager(version=installed_version).install())
+        service = Service(ChromeDriverManager(driver_version=installed_version).install())
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
 
     def __enter__(self):
