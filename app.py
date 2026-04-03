@@ -44,7 +44,6 @@ with st.sidebar:
     location = st.text_input("Location",        value="Makati, Philippines")
     max_cafes  = st.slider("Max cafes",   min_value=5, max_value=50, value=20, step=5)
     max_pages  = st.slider("Max pages",   min_value=1, max_value=10, value=3)
-    driver_path = st.text_input("Edge WebDriver path", value="msedgedriver.exe")
 
     st.divider()
     st.subheader("Tambay score weights")

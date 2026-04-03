@@ -120,29 +120,30 @@ def compute_tambay_score(features: Dict) -> float:
 # =============================
 # SELENIUM BOOKY SCRAPER
 # =============================
+
+
 class BookyScraper:
     def __init__(self):
-        # Set Chrome options for Streamlit Cloud
+        # Chrome options for headless/container environments
         chrome_options = Options()
-        chrome_options.add_argument("--headless")  # Run without UI
-        chrome_options.add_argument("--no-sandbox")  # Required in cloud containers
-        chrome_options.add_argument("--disable-dev-shm-usage")  # Avoid memory issues
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--remote-debugging-port=9222")  # optional, useful for debugging
+        chrome_options.add_argument("--headless=new")  # use new headless mode
+        chrome_options.add_argument("--no-sandbox")  # required in many Linux containers
+        chrome_options.add_argument("--disable-dev-shm-usage")  # prevent shared memory issues
+        chrome_options.add_argument("--disable-gpu")  # avoid GPU errors
+        chrome_options.add_argument("--window-size=1920,1080")  # ensures full page renders
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-software-rasterizer")
+        chrome_options.add_argument("--remote-debugging-port=9222")
 
-        # Initialize Chrome driver using webdriver-manager
-        self.driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()),
-            options=chrome_options
-        )
+        # Use ChromeDriverManager to automatically install compatible ChromeDriver
+        service = Service(ChromeDriverManager().install())
+        self.driver = webdriver.Chrome(service=service, options=chrome_options)
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.driver:
-            self.driver.quit()
+        self.driver.quit()
 
     def close(self):
         self.driver.quit()
