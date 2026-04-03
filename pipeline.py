@@ -121,6 +121,12 @@ def compute_tambay_score(features: Dict) -> float:
 # SELENIUM BOOKY SCRAPER
 # =============================
 
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+import subprocess
+
 class BookyScraper:
     RESULT_SELECTORS = [
         ".search-result-tile-container",
@@ -155,7 +161,22 @@ class BookyScraper:
         chrome_options.add_argument("--disable-software-rasterizer")
         chrome_options.add_argument("--remote-debugging-port=9222")
 
-        service = Service(ChromeDriverManager().install())
+        # --------------------------
+        # Auto-detect installed Chrome/Chromium version
+        # --------------------------
+        try:
+            version_output = subprocess.check_output(
+                ["/usr/bin/chromium", "--version"],  # path to your Chrome/Chromium
+                stderr=subprocess.STDOUT
+            ).decode("utf-8")
+            installed_version = version_output.split()[1]  # e.g., '146.0.7680.177'
+            print(f"Detected Chrome version: {installed_version}")
+        except Exception:
+            installed_version = "latest"
+            print("Could not detect Chrome version, using latest driver.")
+
+        # Use webdriver_manager to get the matching driver
+        service = Service(ChromeDriverManager(version=installed_version).install())
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
 
     def __enter__(self):
