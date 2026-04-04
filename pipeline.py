@@ -18,9 +18,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from selenium.webdriver.common.keys import Keys
-from webdriver_manager.chrome import ChromeDriverManager
-
-
+from selenium.webdriver.chrome.webdriver import WebDriver
 
 # =============================
 # LOGGING
@@ -42,7 +40,6 @@ MAX_CAFES       = 20
 DATABASE_FILE   = "cafes.db"
 
 # Each feature is a boolean. Weight = how much it contributes to the 0–10 tambay_score.
-# e.g. a cafe with wifi + outlets + quiet = 0.25+0.25+0.20 = 0.70 → 7.0/10
 TAMBAY_WEIGHTS = {
     "has_wifi":         0.25,
     "has_outlets":      0.25,
@@ -91,10 +88,6 @@ class Cafe:
 # UTILITIES
 # =============================
 def with_retries(fn, retries=3, delay=2, fallback=None, no_retry=()):
-    """
-    Call fn(); retry on Exception up to `retries` times.
-    `no_retry` is a tuple of exception types that should NOT be retried.
-    """
     for attempt in range(1, retries + 1):
         try:
             return fn()
@@ -110,24 +103,45 @@ def with_retries(fn, retries=3, delay=2, fallback=None, no_retry=()):
 
 
 def compute_tambay_score(features: Dict) -> float:
-    """
-    Weighted boolean score: each True feature contributes its full weight.
-    Sum of all weights = 1.0, multiplied by 10 gives a 0–10 scale.
-    """
     score = sum(TAMBAY_WEIGHTS.get(k, 0) for k, v in features.items() if v)
     return round(score * 10, 2)
 
 # =============================
-# SELENIUM BOOKY SCRAPER
+# SELENIUM BOOKY SCRAPER (Chrome)
 # =============================
-
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-import subprocess
-
 class BookyScraper:
+    def __init__(self, driver_path: str):
+        options = Options()
+        options.add_argument("--headless=new")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--blink-settings=imagesEnabled=false")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-infobars")
+        options.add_argument("--disable-notifications")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--no-sandbox")
+
+        service = Service(driver_path)
+        self.driver: WebDriver = webdriver.Chrome(service=service, options=options)
+        self.wait = WebDriverWait(self.driver, 15)
+        self.driver.get("https://booky.ph/")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def close(self):
+        self.driver.quit()
+
+    def _parse_price(self, text: str) -> Optional[float]:
+        try:
+            return float(re.sub(r"[^\d.]", "", text))
+        except (ValueError, TypeError):
+            return None
+
     RESULT_SELECTORS = [
         ".search-result-tile-container",
         ".search-results .item",
@@ -150,40 +164,20 @@ class BookyScraper:
         "[class*='no-result']",
     ]
 
-    def __init__(self):
-        chrome_options = Options()
-        chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-software-rasterizer")
-        chrome_options.add_argument("--remote-debugging-port=9222")
-
-        # --------------------------
-        # Auto-detect installed Chrome/Chromium version
-        # --------------------------
-        try:
-            version_output = subprocess.check_output(
-                ["/usr/bin/chromium", "--version"],  # path to your Chrome/Chromium
-                stderr=subprocess.STDOUT
-            ).decode("utf-8")
-            installed_version = version_output.split()[1]  # e.g., '146.0.7680.177'
-            print(f"Detected Chrome version: {installed_version}")
-        except Exception:
-            installed_version = "latest"
-            print("Could not detect Chrome version, using latest driver.")
-
-        # Use webdriver_manager to get the matching driver
-        service = Service(ChromeDriverManager(driver_version=installed_version).install())
-        self.driver = webdriver.Chrome(service=service, options=chrome_options)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.driver.quit()
+    def _wait_for_any(self, selectors: list, timeout: int = 15):
+        end = time.time() + timeout
+        while time.time() < end:
+            for empty_sel in self.NO_RESULTS_SELECTORS:
+                if self.driver.find_elements(By.CSS_SELECTOR, empty_sel):
+                    raise ValueError(f"Booky returned no results ('{empty_sel}' found)")
+            for sel in selectors:
+                if self.driver.find_elements(By.CSS_SELECTOR, sel):
+                    return self.driver.find_elements(By.CSS_SELECTOR, sel)[0]
+            time.sleep(0.5)
+        raise TimeoutException(
+            f"None of {selectors} found within {timeout}s. "
+            f"Page title: '{self.driver.title}' | URL: {self.driver.current_url}"
+        )
 
     @staticmethod
     def _clean_query(query: str) -> str:
@@ -192,34 +186,15 @@ class BookyScraper:
                 query = query.split(sep)[0]
         return query.strip()
 
-    def _parse_price(self, text: str) -> Optional[float]:
-        try:
-            return float(re.sub(r"[^\d.]", "", text))
-        except (ValueError, TypeError):
-            return None
-
-    def _wait_for_any(self, selectors: list, timeout: int = 15):
-        end = time.time() + timeout
-        while time.time() < end:
-            for empty_sel in self.NO_RESULTS_SELECTORS:
-                if self.driver.find_elements(By.CSS_SELECTOR, empty_sel):
-                    raise ValueError(f"Booky returned no results ('{empty_sel}' found)")
-            for sel in selectors:
-                elements = self.driver.find_elements(By.CSS_SELECTOR, sel)
-                if elements:
-                    return elements[0]
-            time.sleep(0.5)
-        raise TimeoutException(f"None of {selectors} found within {timeout}s")
-
     def scrape_price_range(self, query: str) -> Tuple[Optional[int], Optional[int]]:
         clean = self._clean_query(query)
+        log.info(f"  Booky search: '{clean}' (original: '{query}')")
 
         def _scrape():
             self.driver.get("https://booky.ph/")
             WebDriverWait(self.driver, 10).until(
                 lambda d: d.execute_script("return document.readyState") == "complete"
             )
-
             search_box = self._wait_for_any([
                 "input[name='search']",
                 "input[placeholder*='Search']",
@@ -240,7 +215,9 @@ class BookyScraper:
             self.driver.execute_script("arguments[0].click();", menu_btn)
 
             WebDriverWait(self.driver, 15).until(
-                lambda d: any(d.find_elements(By.CSS_SELECTOR, sel) for sel in self.PRICE_SELECTORS)
+                lambda d: any(
+                    d.find_elements(By.CSS_SELECTOR, sel) for sel in self.PRICE_SELECTORS
+                )
             )
             self.driver.execute_script("""
                 const menu = document.querySelector('.listing__menu');
@@ -254,18 +231,30 @@ class BookyScraper:
             values = [v for v in values if v is not None]
 
             if not values:
-                raise ValueError("No price elements found")
+                raise ValueError("No price elements found across all selectors")
+
             return int(min(values)), int(max(values))
 
-        return with_retries(_scrape, retries=2, fallback=(None, None), no_retry=(ValueError,))
+        result = with_retries(_scrape, retries=2, fallback=(None, None), no_retry=(ValueError,))
+        if result == (None, None):
+            log.warning(f"Price scrape failed for: '{clean}'")
+        return result
+
 # =============================
 # GOOGLE PLACES
 # =============================
-def search_google_cafes(max_cafes: int = MAX_CAFES) -> List[Dict]:
+def search_google_cafes(
+    query: str = SEARCH_QUERY,
+    location: str = SEARCH_LOCATION,
+    max_cafes: int = MAX_CAFES,
+    max_pages: int = MAX_PAGES,
+    api_key: str = None,
+) -> List[Dict]:
+    key = api_key or GOOGLE_API_KEY
     cafes, next_page = [], None
 
-    for page in range(MAX_PAGES):
-        params = {"query": f"{SEARCH_QUERY} in {SEARCH_LOCATION}", "key": GOOGLE_API_KEY}
+    for page in range(max_pages):
+        params = {"query": f"{query} in {location}", "key": key}
         if next_page:
             params["pagetoken"] = next_page
             time.sleep(2)
@@ -287,11 +276,12 @@ def search_google_cafes(max_cafes: int = MAX_CAFES) -> List[Dict]:
     return cafes[:max_cafes]
 
 
-def fetch_google_details(place_id: str) -> Optional[Cafe]:
+def fetch_google_details(place_id: str, api_key: str = None) -> Optional[Cafe]:
+    key = api_key or GOOGLE_API_KEY
     params = {
         "place_id": place_id,
         "fields": "name,rating,user_ratings_total,formatted_address,reviews",
-        "key": GOOGLE_API_KEY,
+        "key": key,
     }
 
     def _fetch():
@@ -352,9 +342,9 @@ def upsert_cafe(conn: sqlite3.Connection, cafe: Cafe):
         cafe.place_id, cafe.name, cafe.rating, cafe.review_count, cafe.address,
         cafe.min_price, cafe.max_price,
         int(cafe.tambayable), cafe.tambay_score, cafe.reason,
-        int(f.get("has_wifi", False)),         int(f.get("has_outlets", False)),
-        int(f.get("is_quiet", False)),         int(f.get("is_comfy", False)),
-        int(f.get("is_spacious", False)),      int(f.get("opens_until_late", False)),
+        int(f.get("has_wifi", False)),     int(f.get("has_outlets", False)),
+        int(f.get("is_quiet", False)),     int(f.get("is_comfy", False)),
+        int(f.get("is_spacious", False)),  int(f.get("opens_until_late", False)),
     ))
     conn.commit()
 
@@ -388,8 +378,10 @@ Return this exact JSON structure (all feature values must be boolean true/false)
 """
 
 
-def classify_cafe_with_llm(cafe: Cafe):
-    if not client:
+def classify_cafe_with_llm(cafe: Cafe, openai_key: str = None):
+    api_key = openai_key or OPENAI_API_KEY
+    llm_client = OpenAI(api_key=api_key) if api_key else client
+    if not llm_client:
         log.warning("No OpenAI client — skipping LLM classification.")
         return
 
@@ -400,7 +392,7 @@ def classify_cafe_with_llm(cafe: Cafe):
     prompt = USER_PROMPT_TEMPLATE.format(name=cafe.name, reviews=review_text)
 
     def _call():
-        res = client.chat.completions.create(
+        res = llm_client.chat.completions.create(
             model="gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
@@ -420,7 +412,6 @@ def classify_cafe_with_llm(cafe: Cafe):
     cafe.reason       = data.get("reason", "")
     cafe.features     = data.get("features", cafe.features)
     cafe.tambay_score = compute_tambay_score(cafe.features)
-
     log.info(f"  -> tambayable={cafe.tambayable}, tambay_score={cafe.tambay_score}")
 
 # =============================
@@ -433,6 +424,7 @@ def build_dataframe(cafes: List[Cafe]) -> pd.DataFrame:
             "name":          c.name,
             "rating":        c.rating,
             "review_count":  c.review_count,
+            "address":       c.address,
             "min_price":     c.min_price,
             "max_price":     c.max_price,
             "mid_price":     (c.min_price + c.max_price) / 2 if c.min_price and c.max_price else None,
@@ -446,63 +438,64 @@ def build_dataframe(cafes: List[Cafe]) -> pd.DataFrame:
     return df
 
 
-def print_summary(df: pd.DataFrame):
-    log.info("\n" + "=" * 60)
-    log.info("PIPELINE COMPLETE — TOP TAMBAYABLE CAFES")
-    log.info("=" * 60)
-
-    top = (
-        df[df["tambayable"]]
-        .sort_values("tambay_score", ascending=False)
-        .head(10)[["name", "tambay_score", "rating", "mid_price", "has_wifi", "has_outlets", "opens_until_late"]]
-    )
-    log.info(f"\n{top.to_string(index=False)}")
-
-    log.info("\n--- Feature Correlations with Tambay Score ---")
-    feature_cols = list(TAMBAY_WEIGHTS.keys())
-    corr = df[feature_cols + ["tambay_score"]].corr()["tambay_score"].drop("tambay_score")
-    log.info(f"\n{corr.sort_values(ascending=False).to_string()}")
-
-    log.info(f"\n--- Price vs Tambayable ---")
-    log.info(df.groupby("tambayable")["mid_price"].describe().to_string())
-
-
 def export_results(df: pd.DataFrame, path: str = "cafes_results.csv"):
-    df.drop(columns=["reason"]).to_csv(path, index=False)
+    df.drop(columns=["reason"], errors="ignore").to_csv(path, index=False)
     log.info(f"\nResults exported → {path}")
 
+
 # =============================
-# PIPELINE
+# PIPELINE (callable from UI)
 # =============================
-def run_pipeline() -> pd.DataFrame:
-    conn = sqlite3.connect(DATABASE_FILE)
+def run_pipeline(
+    driver_path: str,
+    search_query: str = SEARCH_QUERY,
+    search_location: str = SEARCH_LOCATION,
+    max_cafes: int = MAX_CAFES,
+    max_pages: int = MAX_PAGES,
+    google_api_key: str = None,
+    openai_api_key: str = None,
+    db_file: str = DATABASE_FILE,
+    progress_callback=None,   # fn(step: int, total: int, message: str)
+) -> pd.DataFrame:
+
+    conn = sqlite3.connect(db_file)
     init_db(conn)
 
-    google_results = search_google_cafes()
+    google_results = search_google_cafes(
+        query=search_query,
+        location=search_location,
+        max_cafes=max_cafes,
+        max_pages=max_pages,
+        api_key=google_api_key,
+    )
     log.info(f"Found {len(google_results)} cafes from Google.")
 
     cafes: List[Cafe] = []
+    total = len(google_results)
 
-    with BookyScraper() as scraper:
+    with BookyScraper(driver_path) as scraper:
         for i, entry in enumerate(google_results, 1):
             name = entry.get("name", "Unknown")
-            log.info(f"[{i}/{len(google_results)}] Processing: {name}")
+            log.info(f"[{i}/{total}] Processing: {name}")
 
-            cafe = fetch_google_details(entry["place_id"])
+            if progress_callback:
+                progress_callback(i, total, f"Processing **{name}** ({i}/{total})")
+
+            cafe = fetch_google_details(entry["place_id"], api_key=google_api_key)
             if cafe is None:
                 continue
 
             cafe.min_price, cafe.max_price = scraper.scrape_price_range(name)
-            classify_cafe_with_llm(cafe)
+            classify_cafe_with_llm(cafe, openai_key=openai_api_key)
             upsert_cafe(conn, cafe)
             cafes.append(cafe)
 
     conn.close()
     df = build_dataframe(cafes)
-    print_summary(df)
     export_results(df)
     return df
 
 
 if __name__ == "__main__":
-    df = run_pipeline()
+    DRIVER_PATH = r"chromedriver.exe"
+    df = run_pipeline(DRIVER_PATH)
