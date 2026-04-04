@@ -19,6 +19,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.webdriver import WebDriver
+from webdriver_manager.chrome import ChromeDriverManager
 
 # =============================
 # LOGGING
@@ -39,7 +40,6 @@ MAX_PAGES       = 3
 MAX_CAFES       = 20
 DATABASE_FILE   = "cafes.db"
 
-# Each feature is a boolean. Weight = how much it contributes to the 0–10 tambay_score.
 TAMBAY_WEIGHTS = {
     "has_wifi":         0.25,
     "has_outlets":      0.25,
@@ -88,6 +88,10 @@ class Cafe:
 # UTILITIES
 # =============================
 def with_retries(fn, retries=3, delay=2, fallback=None, no_retry=()):
+    """
+    Call fn(); retry on Exception up to `retries` times.
+    `no_retry` is a tuple of exception types that skip retrying.
+    """
     for attempt in range(1, retries + 1):
         try:
             return fn()
@@ -106,24 +110,43 @@ def compute_tambay_score(features: Dict) -> float:
     score = sum(TAMBAY_WEIGHTS.get(k, 0) for k, v in features.items() if v)
     return round(score * 10, 2)
 
+
+def _build_chrome_driver(driver_path: Optional[str] = None) -> WebDriver:
+    """
+    Build a headless Chrome WebDriver.
+
+    Priority:
+      1. If `driver_path` points to a real file, use it directly.
+      2. Otherwise, webdriver-manager auto-downloads the correct ChromeDriver
+         for the locally installed Chrome version — no manual setup required.
+    """
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--blink-settings=imagesEnabled=false")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-infobars")
+    options.add_argument("--disable-notifications")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--no-sandbox")
+
+    if driver_path and os.path.isfile(driver_path):
+        log.info(f"Using provided ChromeDriver: {driver_path}")
+        service = Service(driver_path)
+    else:
+        log.info("Auto-downloading ChromeDriver via webdriver-manager…")
+        service = Service(ChromeDriverManager().install())
+
+    return webdriver.Chrome(service=service, options=options)
+
+
 # =============================
-# SELENIUM BOOKY SCRAPER (Chrome)
+# SELENIUM BOOKY SCRAPER
 # =============================
 class BookyScraper:
-    def __init__(self, driver_path: str):
-        options = Options()
-        options.add_argument("--headless=new")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--blink-settings=imagesEnabled=false")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--disable-infobars")
-        options.add_argument("--disable-notifications")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--no-sandbox")
-
-        service = Service(driver_path)
-        self.driver: WebDriver = webdriver.Chrome(service=service, options=options)
+    def __init__(self, driver_path: Optional[str] = None):
+        self.driver: WebDriver = _build_chrome_driver(driver_path)
         self.wait = WebDriverWait(self.driver, 15)
         self.driver.get("https://booky.ph/")
 
@@ -365,7 +388,7 @@ Reviews (truncated):
 Return this exact JSON structure (all feature values must be boolean true/false):
 {{
   "tambayable": <bool>,
-  "reason": "<2–3 sentence summary referencing specific review evidence>",
+  "reason": "<2-3 sentence summary referencing specific review evidence>",
   "features": {{
     "has_wifi":         <true|false>,
     "has_outlets":      <true|false>,
@@ -440,14 +463,14 @@ def build_dataframe(cafes: List[Cafe]) -> pd.DataFrame:
 
 def export_results(df: pd.DataFrame, path: str = "cafes_results.csv"):
     df.drop(columns=["reason"], errors="ignore").to_csv(path, index=False)
-    log.info(f"\nResults exported → {path}")
+    log.info(f"\nResults exported -> {path}")
 
 
 # =============================
 # PIPELINE (callable from UI)
 # =============================
 def run_pipeline(
-    driver_path: str,
+    driver_path: Optional[str] = None,
     search_query: str = SEARCH_QUERY,
     search_location: str = SEARCH_LOCATION,
     max_cafes: int = MAX_CAFES,
@@ -497,5 +520,5 @@ def run_pipeline(
 
 
 if __name__ == "__main__":
-    DRIVER_PATH = r"chromedriver.exe"
-    df = run_pipeline(DRIVER_PATH)
+    # driver_path=None -> auto-download the correct ChromeDriver via webdriver-manager
+    df = run_pipeline()

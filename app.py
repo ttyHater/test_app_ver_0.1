@@ -390,8 +390,11 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("**🌐 Chrome Driver**")
-    driver_path = st.text_input("chromedriver path", value="chromedriver.exe",
-                                help="Full path or filename if on PATH")
+    st.caption("ChromeDriver is auto-managed. Leave blank to auto-download, or enter a path to use your own binary.")
+    driver_path = st.text_input(
+        "chromedriver path (optional)", value="",
+        placeholder="Leave blank to auto-download",
+    )
 
     st.markdown("---")
     run_btn = st.button("▶  Run Pipeline", use_container_width=True)
@@ -431,8 +434,6 @@ if run_btn:
         st.error("Please enter your Google Places API Key in the sidebar.")
     elif not openai_key:
         st.error("Please enter your OpenAI API Key in the sidebar.")
-    elif not driver_path:
-        st.error("Please specify the chromedriver path.")
     else:
         st.session_state["running"] = True
         st.session_state["log_lines"] = []
@@ -457,7 +458,7 @@ if run_btn:
             from pipeline import run_pipeline
             with st.spinner("Running pipeline — this may take a few minutes…"):
                 df_result = run_pipeline(
-                    driver_path=driver_path,
+                    driver_path=driver_path or None,
                     search_query=search_query,
                     search_location=search_location,
                     max_cafes=int(max_cafes),
