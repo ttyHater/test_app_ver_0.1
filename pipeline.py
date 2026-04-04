@@ -19,7 +19,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.webdriver import WebDriver
-from webdriver_manager.chrome import ChromeDriverManager
 
 # =============================
 # LOGGING
@@ -111,14 +110,30 @@ def compute_tambay_score(features: Dict) -> float:
     return round(score * 10, 2)
 
 
+# Known Chromium binary locations on common Linux distros
+_CHROMIUM_BINS = [
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/snap/bin/chromium",
+]
+
+
 def _build_chrome_driver(driver_path: Optional[str] = None) -> WebDriver:
     """
-    Build a headless Chrome WebDriver.
+    Build a headless Chrome/Chromium WebDriver using Selenium's built-in
+    Selenium Manager (Selenium >= 4.6) — no webdriver-manager package needed.
+
+    Selenium Manager automatically downloads the ChromeDriver version that
+    matches the locally installed browser, solving the version-mismatch error.
 
     Priority:
-      1. If `driver_path` points to a real file, use it directly.
-      2. Otherwise, webdriver-manager auto-downloads the correct ChromeDriver
-         for the locally installed Chrome version — no manual setup required.
+      1. If `driver_path` is a valid chromedriver binary -> use it via Service.
+      2. Otherwise -> pass no Service so Selenium Manager resolves the driver.
+
+    If Chromium (not Chrome) is installed, the binary path is set explicitly
+    so Selenium Manager looks for a chromium-compatible driver.
     """
     options = Options()
     options.add_argument("--headless=new")
@@ -131,14 +146,21 @@ def _build_chrome_driver(driver_path: Optional[str] = None) -> WebDriver:
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--no-sandbox")
 
-    if driver_path and os.path.isfile(driver_path):
-        log.info(f"Using provided ChromeDriver: {driver_path}")
-        service = Service(driver_path)
-    else:
-        log.info("Auto-downloading ChromeDriver via webdriver-manager…")
-        service = Service(ChromeDriverManager().install())
+    # Auto-detect Chromium binary if Chrome is not the default browser
+    for bin_path in _CHROMIUM_BINS:
+        if os.path.isfile(bin_path):
+            log.info(f"Detected browser binary: {bin_path}")
+            options.binary_location = bin_path
+            break
 
-    return webdriver.Chrome(service=service, options=options)
+    if driver_path and os.path.isfile(driver_path):
+        # Explicit driver path provided — use it directly
+        log.info(f"Using provided ChromeDriver: {driver_path}")
+        return webdriver.Chrome(service=Service(driver_path), options=options)
+
+    # No driver path — let Selenium Manager auto-resolve (Selenium >= 4.6)
+    log.info("Using Selenium Manager to auto-resolve ChromeDriver…")
+    return webdriver.Chrome(options=options)
 
 
 # =============================
