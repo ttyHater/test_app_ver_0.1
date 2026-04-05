@@ -337,7 +337,7 @@ def render_top_cafes(df: pd.DataFrame):
                 <span class="score-pill {cls}">{row['tambay_score']}/10</span>
             </div>
             <div style="margin:0.5rem 0;">{features_html}</div>
-            <div style="font-size:0.82rem;color:#7a7060;font-style:italic;">{row.get('reason','')}</div>
+            <div style="font-size:0.82rem;color:#7a7060;font-style:italic;">{row.get('summary','')}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -367,7 +367,7 @@ def render_full_table(df: pd.DataFrame):
 
 
 def get_csv(df: pd.DataFrame) -> bytes:
-    return df.drop(columns=["reason"], errors="ignore").to_csv(index=False).encode("utf-8")
+    return df.drop(columns=["summary"], errors="ignore").to_csv(index=False).encode("utf-8")
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -395,7 +395,6 @@ with st.sidebar:
         "chromedriver path (optional)", value="",
         placeholder="Leave blank to auto-download",
     )
-
     st.markdown("---")
     run_btn = st.button("▶  Run Pipeline", use_container_width=True)
 
@@ -440,44 +439,73 @@ if run_btn:
 
         progress_bar  = st.progress(0)
         status_text   = st.empty()
-        log_container = st.expander("📋 Live Log", expanded=True)
+        log_placeholder = st.empty()
 
         def update_progress(step, total, message):
-            pct = int(step / total * 100)
+            pct = int((step / total) * 100) if total > 0 else 0
+            pct = min(pct, 100)
             progress_bar.progress(pct)
             status_text.markdown(
                 f'<div class="status-box">⏳ {message}</div>',
                 unsafe_allow_html=True,
             )
             st.session_state["log_lines"].append(message)
-            with log_container:
-                for line in st.session_state["log_lines"][-12:]:
-                    st.markdown(f"› {line}")
+            # Update log display with last 15 lines
+            with log_placeholder.container():
+                with st.expander("📋 Live Log", expanded=True):
+                    for line in st.session_state["log_lines"][-15:]:
+                        st.markdown(f"› {line}")
 
         try:
-            from pipeline import run_pipeline
-            with st.spinner("Running pipeline — this may take a few minutes…"):
-                df_result = run_pipeline(
-                    driver_path=driver_path or None,
-                    search_query=search_query,
-                    search_location=search_location,
-                    max_cafes=int(max_cafes),
-                    max_pages=int(max_pages),
-                    google_api_key=google_key,
-                    openai_api_key=openai_key,
-                    progress_callback=update_progress,
-                )
-
-            progress_bar.progress(100)
-            status_text.markdown(
-                '<div class="status-box" style="border-left-color:#5dba7e;">✅ Pipeline complete!</div>',
-                unsafe_allow_html=True,
+            from pipeline import run_pipeline, PipelineConfig
+            
+            # Build config object
+            cfg = PipelineConfig(
+                search_query=search_query,
+                search_location=search_location,
+                max_cafes=int(max_cafes),
+                max_pages=int(max_pages),
+                google_api_key=google_key,
+                openai_api_key=openai_key,
+                driver_path=driver_path or "",
             )
-            st.session_state["df"] = df_result
+            
+            df_result = None
+            step_count = 0
+            
+            # Consume the generator and update progress
+            for event_type, payload in run_pipeline(cfg):
+                if event_type == "log":
+                    update_progress(step_count, 100, payload)
+                    step_count += 1
+                
+                elif event_type == "progress":
+                    current, total = payload
+                    update_progress(current, total, f"Processing cafe {current}/{total}…")
+                
+                elif event_type == "cafe_done":
+                    pass  # Optional: could update a cafe counter
+                
+                elif event_type == "result":
+                    df_result = payload
+                
+                elif event_type == "error":
+                    raise Exception(payload)
+
+            if df_result is not None:
+                progress_bar.progress(100)
+                status_text.markdown(
+                    '<div class="status-box" style="border-left-color:#5dba7e;">✅ Pipeline complete!</div>',
+                    unsafe_allow_html=True,
+                )
+                st.session_state["df"] = df_result
+            else:
+                st.error("Pipeline completed but no results were returned.")
+            
             st.session_state["running"] = False
 
-        except ImportError:
-            st.error("Could not import `pipeline.py`. Make sure it's in the same directory as this app.")
+        except ImportError as ie:
+            st.error(f"Could not import pipeline: {ie}. Make sure pipeline.py is in the same directory as this app.")
         except Exception as e:
             st.error(f"Pipeline failed: {e}")
             st.session_state["running"] = False
