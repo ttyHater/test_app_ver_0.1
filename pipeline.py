@@ -221,16 +221,27 @@ class BookyScraper:
         options.add_argument("--disable-setuid-sandbox")
 
         if driver_path:
+            # User provided explicit path
             service = Service(driver_path)
             self.driver = webdriver.Chrome(service=service, options=options)
         else:
-            # Auto-detect chromedriver via PATH or webdriver-manager if available
+            # Auto-detect and download correct ChromeDriver version
             try:
                 from webdriver_manager.chrome import ChromeDriverManager
-                service = Service(ChromeDriverManager().install())
+                from webdriver_manager.utils import ChromeType
+                
+                # This auto-downloads ChromeDriver matching your installed Chrome version
+                manager = ChromeDriverManager()
+                chrome_driver_path = manager.install()
+                service = Service(chrome_driver_path)
                 self.driver = webdriver.Chrome(service=service, options=options)
+                logging.info(f"✅ ChromeDriver loaded from: {chrome_driver_path}")
+                
             except ImportError:
-                # Fall back to Chrome on PATH
+                logging.warning("webdriver-manager not installed, falling back to system PATH")
+                self.driver = webdriver.Chrome(options=options)
+            except Exception as e:
+                logging.error(f"webdriver-manager failed: {e}. Trying system Chrome...")
                 self.driver = webdriver.Chrome(options=options)
 
         self.wait = WebDriverWait(self.driver, 15)
@@ -243,7 +254,10 @@ class BookyScraper:
         self.close()
 
     def close(self) -> None:
-        self.driver.quit()
+        try:
+            self.driver.quit()
+        except:
+            pass
 
     def _parse_price(self, text: str) -> Optional[float]:
         try:
@@ -643,7 +657,10 @@ def run_pipeline(cfg: PipelineConfig):
         total = len(google_results)
 
         yield "log", "🚗 Starting Chrome headless scraper..."
-        with BookyScraper(cfg.driver_path) as scraper:
+        scraper = None
+        try:
+            scraper = BookyScraper(cfg.driver_path)
+            
             for i, entry in enumerate(google_results, 1):
                 name     = entry.get("name", "Unknown")
                 place_id = entry["place_id"]
@@ -685,6 +702,47 @@ def run_pipeline(cfg: PipelineConfig):
                 upsert_cafe(conn, cafe, tagged_by=method)
                 cafes.append(cafe)
                 yield "cafe_done", cafe
+        
+        except Exception as scraper_error:
+            yield "log", f"⚠️ ChromeDriver error: {scraper_error}"
+            yield "log", f"⚠️ Proceeding without price scraping (Booky disabled)..."
+            yield "log", f"⚠️ Prices will show as N/A, but analysis will continue"
+            
+            # Continue processing without scraper
+            for i, entry in enumerate(google_results, 1):
+                name     = entry.get("name", "Unknown")
+                place_id = entry["place_id"]
+
+                yield "log", f"[{i}/{total}] Processing: **{name}** (no scraper)"
+                yield "progress", (i, total)
+
+                cached = load_cafe_from_db(conn, place_id)
+                if cached is not None:
+                    yield "log", f"  💾 Cache hit"
+                    tagged_by_map[place_id] = cached.tagged_by
+                    cafes.append(cached.cafe)
+                    yield "cafe_done", cached.cafe
+                    continue
+
+                cafe = fetch_google_details(place_id, cfg.google_api_key)
+                if cafe is None:
+                    yield "log", f"  ⚠️ Could not fetch details"
+                    continue
+
+                yield "log", f"  🤖 Classifying features..."
+                method = classify_cafe(cafe, tags, cfg.tambay_weights, cfg.openai_api_key)
+                tagged_by_map[cafe.place_id] = method
+
+                score_emoji = "✅" if cafe.tambayable else "❌"
+                yield "log", f"  {score_emoji} Score={cafe.tambay_score} | Method={method}"
+
+                upsert_cafe(conn, cafe, tagged_by=method)
+                cafes.append(cafe)
+                yield "cafe_done", cafe
+        
+        finally:
+            if scraper is not None:
+                scraper.close()
 
         conn.close()
         df = build_dataframe(cafes, tagged_by_map)
