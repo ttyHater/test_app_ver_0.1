@@ -376,6 +376,7 @@ with st.sidebar:
     st.markdown("---")
 
     st.markdown("**🔍 Search Settings**")
+    search_query    = "cafe"
     search_location = st.text_input("Location", value="Makati Philippines")
     max_cafes       = st.number_input("Max Cafes", min_value=1, max_value=60, value=20, step=5)
     max_pages       = st.number_input("Max Pages", min_value=1, max_value=5, value=3, step=1)
@@ -386,7 +387,6 @@ with st.sidebar:
                                value=os.getenv("GOOGLE_API_KEY", ""))
     openai_key = st.text_input("OpenAI API Key", type="password",
                                value=os.getenv("OPENAI_API_KEY", ""))
-
     st.markdown("---")
     run_btn = st.button("▶  Run Pipeline", use_container_width=True)
 
