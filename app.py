@@ -387,7 +387,11 @@ with st.sidebar:
                                value=os.getenv("GOOGLE_API_KEY", ""))
     openai_key = st.text_input("OpenAI API Key", type="password",
                                value=os.getenv("OPENAI_API_KEY", ""))
+
     st.markdown("---")
+   
+    driver_path = ""
+
     run_btn = st.button("▶  Run Pipeline", use_container_width=True)
 
     st.markdown("---")
