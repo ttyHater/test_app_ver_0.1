@@ -30,7 +30,7 @@ class PipelineConfig:
     max_cafes:       int = 10
     database_file:   str = "cafes.db"
     tags_file:       str = "tags.json"
-    driver_path:     str = ""          # empty = use webdriver-manager auto-detect
+    driver_path:     str = ""          # empty = use webdriver-manager auto-detect nalang
     export_path:     str = "cafes_results.csv"
     google_api_key:  str = ""
     openai_api_key:  str = ""
